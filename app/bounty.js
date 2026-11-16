@@ -1,20 +1,40 @@
 // A bounty's page: status, the four numbers that matter (live pot, entry fee, time left, entries), the rewards
 // table as it stands with fees, the dates, how it is judged, its description and its rules (rendered on open).
-import { cachedJSON } from './boot.js';
-import { ago, esc, fmtDate, money, potOf, statusPill, takesEntries } from './ui.js';
+import { cachedJSON } from './api.js';
+import { ago, esc, fmtDate, money, ordinal, potOf, statusPill, takesEntries } from './ui.js';
 
-const $detail = document.getElementById('detail');
-
-export async function show(slug) {
+export default async function showBounty(slug) {
   const b = await cachedJSON(`/competitions/${encodeURIComponent(slug)}?submissions=summary`);
   renderBountyPanel(b, true);
   document.title = `${b.title} · make.fun board`;
 }
 
-const ordinal = (n) => n + ((n % 100 > 10 && n % 100 < 14) ? 'th' : { 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] ?? 'th');
+export function renderBountyPanel(b, full) {
+  const fees = Number(b.entryFeesUsd || 0), fee = Number(b.entryFeeUsd || 0);
+  const last = b.submissions?.reduce?.((m, s) => (s.createdAt > m ? s.createdAt : m), '');
+  const slug = encodeURIComponent(b.slug), $detail = document.querySelector('main').lastChild;
+  $detail.innerHTML = `<article class=pad>
+<div class=crumb><a href="#/">Bounties</a> › ${esc(b.category ?? 'Bounty')} · by ${esc(b.sponsor?.name ?? 'make.fun')}</div>
+<h1>${esc(b.title)}</h1><p class=lede>${esc(b.summary)}</p>${statusPill(b)}
+<div class=cards>
+<div class=card><span>Live pot</span><b class=pot>${money(potOf(b))}</b><small>${fees ? `${money(b.rewardAmount)} + ${money(fees)} fees` : 'fixed reward'}</small></div>
+<div class=card><span>Entry fee</span><b class=fee>${fee ? money(fee) : '<span class=free>Free</span>'}</b><small>${fee ? `${(b.entryFeePayers ?? 0).toLocaleString('en-US')} paid` : 'no fee to enter'}</small></div>
+<div class=card><span>Time left</span><b><time data-dl="${esc(b.deadline)}"></time></b><small>${takesEntries(b) ? 'until entries close' : 'entries closed'}</small></div>
+<div class=card><span>Entries</span><b>${(b.submissionCount ?? 0).toLocaleString('en-US')}</b><small>${b.submissionsPassed != null ? `${b.submissionsPassed.toLocaleString('en-US')} passed checks` : last ? 'last ' + ago(last) : '—'}</small></div>
+</div>
+<div class=acts><a class="btn go" href="#/bounty/${slug}/leaderboard">Full leaderboard →</a>${full ? '' : `<a class=btn href="#/bounty/${slug}">Rules &amp; details</a>`}<a class=btn href="https://make.fun/bounty/${slug}" target=_blank rel=noopener>${takesEntries(b) ? 'Enter on make.fun ↗' : 'Open on make.fun ↗'}</a></div>
+<div class=cols><section><h2>Rewards now</h2><table><thead><tr><th>Place</th><th>Base</th><th>Fee share</th><th>Amount</th></tr></thead><tbody>${renderRewardsTable(b)}</tbody></table></section>
+<section><h2>Dates</h2><ol class=dates>${renderDates(b)}</ol></section></div>
+${b.resolution?.summary ? `<h2>How it is judged</h2><p class=md>${esc(b.resolution.summary)}</p>` : ''}
+${full ? `<h2>Description</h2><div class=md>${markdownToHtml(b.description)}</div>${b.rules ? `<details><summary>Full rules (${Math.round(b.rules.length / 1024)} KB)</summary><div class=md></div></details>` : ''}` : ''}
+</article>`;
+  const rules = $detail.querySelector('details');
+  rules?.addEventListener('toggle', () => rules.open && !rules.lastChild.firstChild && (rules.lastChild.innerHTML = markdownToHtml(b.rules)), { once: true });
+  $detail.scrollTop = 0;
+}
 
 /** Places with equal amounts folded into one row ("4th–10th"), each with its base, fee share and amount now. */
-function rewardRows(b) {
+function renderRewardsTable(b) {
   const list = b.rewardsNow ?? Object.entries(b.rewards ?? {}).map(([place, usd]) => ({ place: +place, baseUsd: usd, feeShareUsd: 0, amountUsd: usd }));
   const groups = [];
   for (const r of list) {
@@ -41,32 +61,8 @@ function renderDates(b) {
     .map(([t, label, sub]) => `<li class="${t <= now ? 'on' : ''}"><b>${label}</b><small>${fmtDate(t)}${sub ? ' · ' + sub : ''}</small></li>`).join('');
 }
 
-export function renderBountyPanel(b, full) {
-  const fees = Number(b.entryFeesUsd || 0), fee = Number(b.entryFeeUsd || 0);
-  const last = b.submissions?.reduce?.((m, s) => (s.createdAt > m ? s.createdAt : m), '');
-  const slug = encodeURIComponent(b.slug);
-  $detail.innerHTML = `<article class=pad>
-<div class=crumb><a href="#/">Bounties</a> › ${esc(b.category ?? 'Bounty')} · by ${esc(b.sponsor?.name ?? 'make.fun')}</div>
-<h1>${esc(b.title)}</h1><p class=lede>${esc(b.summary)}</p>${statusPill(b)}
-<div class=cards>
-<div class=card><span>Live pot</span><b class=pot>${money(potOf(b))}</b><small>${fees ? `${money(b.rewardAmount)} + ${money(fees)} fees` : 'fixed reward'}</small></div>
-<div class=card><span>Entry fee</span><b class=fee>${fee ? money(fee) : '<span class=free>Free</span>'}</b><small>${fee ? `${(b.entryFeePayers ?? 0).toLocaleString('en-US')} paid` : 'no fee to enter'}</small></div>
-<div class=card><span>Time left</span><b><time data-dl="${esc(b.deadline)}"></time></b><small>${takesEntries(b) ? 'until entries close' : 'entries closed'}</small></div>
-<div class=card><span>Entries</span><b>${(b.submissionCount ?? 0).toLocaleString('en-US')}</b><small>${b.submissionsPassed != null ? `${b.submissionsPassed.toLocaleString('en-US')} passed checks` : last ? 'last ' + ago(last) : '—'}</small></div>
-</div>
-<div class=acts><a class="btn go" href="#/bounty/${slug}/leaderboard">Full leaderboard →</a>${full ? '' : `<a class=btn href="#/bounty/${slug}">Rules &amp; details</a>`}<a class=btn href="https://make.fun/bounty/${slug}" target=_blank rel=noopener>${takesEntries(b) ? 'Enter on make.fun ↗' : 'Open on make.fun ↗'}</a></div>
-<div class=cols><section><h2>Rewards now</h2><table><thead><tr><th>Place</th><th>Base</th><th>Fee share</th><th>Amount</th></tr></thead><tbody>${rewardRows(b)}</tbody></table></section>
-<section><h2>Dates</h2><ol class=dates>${renderDates(b)}</ol></section></div>
-${b.resolution?.summary ? `<h2>How it is judged</h2><p class=md>${esc(b.resolution.summary)}</p>` : ''}
-${full ? `<h2>Description</h2><div class=md>${mdToHtml(b.description)}</div>${b.rules ? `<details id=rules><summary>Full rules (${Math.round(b.rules.length / 1024)} KB)</summary><div class=md></div></details>` : ''}` : ''}
-</article>`;
-  const rules = $detail.querySelector('#rules');
-  rules?.addEventListener('toggle', () => rules.open && !rules.lastChild.firstChild && (rules.lastChild.innerHTML = mdToHtml(b.rules)), { once: true });
-  $detail.scrollTop = 0;
-}
-
 /** A small Markdown subset (headings, lists, code, emphasis, links), escaped first, for descriptions and rules. */
-function mdToHtml(src) {
+function markdownToHtml(src) {
   const inline = (s) => esc(s)
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
@@ -80,9 +76,12 @@ function mdToHtml(src) {
       else (html += `<pre><code>${esc(code)}</code></pre>`), (code = null);
       continue;
     }
-    if (code != null) { code += line + '\n'; continue; }
+    if (code != null) {
+      code += line + '\n';
+      continue;
+    }
     const h = line.match(/^(#{1,4})\s+(.*)/), li = line.match(/^\s*(?:[-*]|(\d+)\.)\s+(.*)/);
-    if (h) close(), (html += `<h${Math.min(4, h[1].length + 2)}>${inline(h[2])}</h${Math.min(4, h[1].length + 2)}>`);
+    if (h) close(), (html += `<h4>${inline(h[2])}</h4>`);
     else if (li) {
       const tag = li[1] ? 'ol' : 'ul';
       if (list != tag) close(), (html += `<${(list = tag)}>`);

@@ -1,6 +1,16 @@
 // Shared by the views and loaded with the first of them: the views' stylesheet (adopted once, so the first load
 // carries only the shell's CSS) and the small formatters every view uses.
 const VIEW_STYLES = `
+nav a:hover{color:var(--tx)}header output{white-space:nowrap}
+nav:after{content:"1.4 KB first load · views on demand · ETag-revalidated cache · virtual lists";margin-left:16px;font-size:12.5px;color:var(--mu)}
+@media(max-width:1180px){nav:after{display:none}}
+main{display:grid;grid-template-columns:minmax(0,640px) minmax(0,1fr);height:calc(100dvh - 53px)}
+main>section{overflow:auto;min-height:0}main>:first-child{border-right:1px solid var(--ln)}
+[data-route=leaderboard] main,[data-route=profile] main{grid-template-columns:1fr}
+[data-route=leaderboard] main>:first-child,[data-route=profile] main>:first-child{display:none}
+@media(max-width:860px){main{grid-template-columns:1fr}nav{display:none}header{gap:10px;padding:0 12px}
+header output{font-size:11px;padding:3px 8px;white-space:normal;line-height:1.25;text-align:right}output span{display:none}
+[data-route=bounty] main>:first-child,[data-route=board] main>:last-child{display:none}}
 .pad{padding:18px 22px}.mu{color:var(--mu)}.err{color:var(--hot);padding:22px}
 .sum{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--ln)}
 .sum div{padding:12px 16px;border-right:1px solid var(--ln)}.sum div:last-child{border:0}
@@ -55,7 +65,7 @@ details summary{cursor:pointer;color:var(--ac);font-weight:600;margin:14px 0}
 .vr[data-medal="1"] .rk{background:#ffd84d}.vr[data-medal="2"] .rk{background:#cfd8e6}.vr[data-medal="3"] .rk{background:#e8a46a}.vr .who{display:flex;gap:11px;align-items:center;min-width:0}.vr .who div{min-width:0}
 .av{width:34px;height:34px;border-radius:50%;background:var(--ln);object-fit:cover;flex:none}
 .sc{display:grid;grid-template-columns:52px 1fr;gap:9px;align-items:center;font-weight:700}
-.ci{position:relative;height:6px;background:#1b2130;border-radius:3px}.ci i{position:absolute;top:0;bottom:0;background:#3a4a66;border-radius:3px}.ci b{position:absolute;top:-3px;width:3px;height:12px;background:var(--ac);border-radius:2px}
+.ci{position:relative;height:6px;background:#1b2130;border-radius:3px}.ci i{position:absolute;top:0;bottom:0;background:#4d6a2a;border-radius:3px}.ci b{position:absolute;top:-3px;width:3px;height:12px;background:var(--ac);border-radius:2px}
 .vr .won{color:var(--pot);font-weight:700;text-align:right}.vr time{text-align:right;color:var(--mu);font-size:13px}.vh span:nth-child(n+4){text-align:right}
 .ph{display:flex;gap:18px;align-items:center}.ph .av{width:84px;height:84px}.ph h1{margin:0}
 .stats{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin:18px 0}
@@ -70,6 +80,28 @@ details summary{cursor:pointer;color:var(--ac);font-weight:600;margin:14px 0}
 const sheet = new CSSStyleSheet();
 sheet.replaceSync(VIEW_STYLES);
 document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+
+/** Time left to an ISO deadline, as the ticker writes it each second. */
+export function timeLeft(iso) {
+  let s = Math.floor((Date.parse(iso) - Date.now()) / 1e3);
+  if (!(s > 0)) return 'closed';
+  const d = Math.floor(s / 86400), h = Math.floor(s / 3600) % 24, m = Math.floor(s / 60) % 60, p = (n) => String(n).padStart(2, '0');
+  s %= 60;
+  return d ? `${d}d ${h}h ${p(m)}m` : h ? `${h}h ${p(m)}m ${p(s)}s` : `${m}m ${p(s)}s`;
+}
+
+/** Every countdown patches its own text and urgency bar in place each second: no view re-renders for the clock. */
+export function tickCountdowns() {
+  for (const el of document.querySelectorAll('[data-dl]')) {
+    const left = Date.parse(el.dataset.dl) - Date.now();
+    if (el.dataset.bar != null) el.style.setProperty('--f', Math.max(0, Math.min(1, left / 6048e5)).toFixed(3));
+    else el.textContent = timeLeft(el.dataset.dl);
+    el.classList.toggle('soon', left > 0 && left < 864e5);
+  }
+}
+setInterval(tickCountdowns, 1e3);
+
+export const ordinal = (n) => n + ((n % 100 > 10 && n % 100 < 14) ? 'th' : { 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] ?? 'th');
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -108,8 +140,12 @@ export const avatarImg = (image, handle, small) =>
 export function formatScore(column, value, display) {
   if (value == null && display == null) return '—';
   if (/_micro$/.test(column?.source ?? '') || column?.key == 'judge') return (Number(value ?? display) / 1e4).toFixed(1) + '%';
+  if (/micro-?usdc/i.test(column?.title ?? '')) return money(Number(value ?? display) / 1e6);
   return display ?? String(value);
 }
+
+/** A score column's title without its unit note, since formatScore already writes the unit. */
+export const scoreTitle = (column) => (column?.title ?? 'Score').replace(/\s*\(micro-?USDC\)/i, '');
 
 export function statusPill(b) {
   if (takesEntries(b)) return `<span class=pill>Taking entries · closes ${fmtDate(b.deadline)}</span>`;
