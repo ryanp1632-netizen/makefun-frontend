@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>make.fun · live bounty board</title>
+<style>
+:root{--bg:#0a0c10;--pn:#12151d;--ln:#232a3a;--tx:#eef1f6;--mu:#a3adbf;--ac:#c4f25a;--pot:#5ee39a;--fee:#ffc95c;--hot:#ff7070;font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums;color:var(--tx);background:var(--bg)}
+body{margin:0}a{color:inherit}
+#top{display:flex;align-items:center;gap:18px;height:52px;padding:0 18px;border-bottom:1px solid var(--ln);background:#0d1016}
+#brand{font-weight:800;font-size:17px;white-space:nowrap;text-decoration:none;letter-spacing:-.02em}#brand b{color:var(--ac)}
+#nav a{color:var(--mu);text-decoration:none;font-size:14px}#nav a:hover{color:var(--tx)}
+#reqs{margin-left:auto;font-size:12.5px;color:var(--mu);border:1px solid var(--ln);border-radius:99px;padding:4px 11px;white-space:nowrap}
+#app{display:grid;grid-template-columns:minmax(0,640px) minmax(0,1fr);height:calc(100dvh - 53px)}
+#list,#detail{overflow:auto;min-height:0}#list{border-right:1px solid var(--ln)}
+[data-route=leaderboard] #app,[data-route=profile] #app{grid-template-columns:1fr}
+[data-route=leaderboard] #list,[data-route=profile] #list{display:none}
+@media(max-width:860px){#app{grid-template-columns:1fr}#nav{display:none}#top{gap:10px;padding:0 12px}#reqs{font-size:11px;padding:3px 8px;white-space:normal;line-height:1.25;text-align:right}#reqs span{display:none}
+[data-route=bounty] #list,[data-route=board] #detail{display:none}}
+</style>
+<header id="top"><a id="brand" href="#/">make<b>.fun</b> board</a><nav id="nav"><a href="#/">Live bounties</a></nav><output id="reqs"></output></header>
+<main id="app"><section id="list"></section><section id="detail"></section></main>
+<script type="module" src="boot.js"></script>
+</html>
