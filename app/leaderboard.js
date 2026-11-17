@@ -23,13 +23,13 @@ function virtualRows() {
   pool.forEach((el, k) => {
     const i = first + k;
     el.hidden = i >= last;
-    if (i < last && (el.row !== shown[i] || el.at !== i)) patchRow(el, shown[i], i);
+    if (i < last && (el.row !== shown[i] || el.at !== i)) patchRow(el, i);
   });
 }
 
-/** One pooled row node takes row r at index i: its position, link, avatar, texts and bar are rewritten. */
-function patchRow(el, r, i) {
-  el.row = r;
+/** A pooled row node takes the row at index i: its position, link, avatar, texts and bar are rewritten. */
+function patchRow(el, i) {
+  const r = (el.row = shown[i]);
   el.at = i;
   el.style.transform = `translateY(${i * ROW_H}px)`;
   el.href = '#/u/' + encodeURIComponent(r.handle);
@@ -90,6 +90,7 @@ function paintLeaderboard(slug, lb, b) {
     + `<span><b>${num(b.submissionCount ?? rows.length)}</b>entries</span><span><b>${num(rows.length)}</b>ranked</span><span><b>${rewards.length}</b>paid places</span>`;
   pane.querySelector('.find .mu').textContent = `${ph.title ?? 'Results'} phase · by ${scoreName(column).toLowerCase()}${rows.some((r) => r.low != null) ? ', bar = 90% interval' : ''}${ph.placements_held ? ' · unofficial until results' : ''}`;
   pane.querySelector('.hd').children[2].textContent = scoreName(column).toUpperCase();
+  pane.querySelector('.hd').children[3].textContent = live ? 'PRIZE NOW' : 'PRIZE';
   if (!rows.length) vl.innerHTML = `<p class=empty>${lb.scores_visible === false ? 'Scores are held until the results publish.' : 'No ranked entries yet.'}</p>`;
   filterRows(query);
   tickCountdowns();

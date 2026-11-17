@@ -1,5 +1,20 @@
+// The app's one shared module, imported by index.html: the shell and the hash router (each view one import()),
 // make.fun's public API (GET only) behind an in-memory cache revalidated by ETag, the per-view request counter in the
-// top bar, the one-second ticker that patches countdowns in place, the formatters and the views' stylesheet.
+// top bar, the one-second ticker that patches countdowns in place, the formatters and the stylesheet.
+
+/** #/ board · #/bounty/<slug> · #/bounty/<slug>/leaderboard · #/u/<handle>: load the view, count its requests. */
+async function route(again) {
+  const my = ++routeSeq, hash = location.hash, [re, name, load] = ROUTES.find(([re]) => re.test(hash));
+  window.__shotReady = false;
+  document.body.dataset.v = name;
+  startView(again === true);
+  try {
+    await (await load()).default(decodeURIComponent(hash.match(re)[1] ?? ''));
+  } catch (e) {
+    document.querySelector('main').lastChild.textContent = 'Could not load this view: ' + e.message;
+  }
+  if (my == routeSeq) window.__shotReady = true;
+}
 
 /** An API answer: from memory within the minute its ETag is bound to, else revalidated (304 = unchanged). */
 export function cachedJSON(path) {
@@ -172,12 +187,22 @@ const inflight = new Map(); // path -> its one request in flight
 const view = { requests: 0, unchanged: 0, memory: 0, at: Infinity };
 const painted = new WeakMap(); // element -> the HTML patchHTML last gave it
 const minuteNow = () => Math.floor(Date.now() / 6e4);
-let force = false;
+let force = false, routeSeq = 0;
+const ROUTES = [
+  [/^#\/u\/([^/?]+)/, 'profile', () => import('./profile.js')],
+  [/^#\/bounty\/([^/?]+)\/leaderboard/, 'leaderboard', () => import('./leaderboard.js')],
+  [/^#\/bounty\/([^/?]+)/, 'bounty', () => import('./bounty.js')],
+  [/^/, 'board', () => import('./board.js')],
+];
 
 const CSS = `
 :root{--bg:#f4f5f7;--card:#fff;--line:#e1e4e9;--soft:#f0f2f5;--tx:#15181d;--mu:#5a6371;--ac:#2456d6;--sel:#edf2ff;--pot:#08783e;--fee:#975a00;--hot:#c62828;--go:#0b7a3e;color-scheme:light}
 @media(prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a20;--line:#2a2f38;--soft:#1e2229;--tx:#eceff3;--mu:#a3abb8;--ac:#86a4ff;--sel:#1c2436;--pot:#4fd08b;--fee:#efb04a;--hot:#ff6b6b;--go:#1f9d5a;color-scheme:dark}}
-body{background:var(--bg);color:var(--tx);font-variant-numeric:tabular-nums}
+body{margin:0;font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--tx);font-variant-numeric:tabular-nums}
+header{display:flex;align-items:center;gap:14px;height:52px;padding:0 20px;background:#13161b;color:#fff}
+header>a{color:#fff;font-weight:750;font-size:16px;text-decoration:none;white-space:nowrap}
+header input{font:inherit;border:1px solid #3a404b;border-radius:8px;background:#20242c;color:#fff;padding:6px 10px}
+output{margin-left:auto;color:#c3c9d3;font-size:12.5px;white-space:nowrap}
 a{color:inherit}button{font:inherit;color:inherit;cursor:pointer}[hidden]{display:none!important}
 header form{flex:0 1 220px}header input{width:100%;box-sizing:border-box}header input:focus{outline:2px solid #86a4ff;outline-offset:0}
 header button{background:#262b34;border:1px solid #3a404b;color:#fff;border-radius:8px;padding:5px 12px;font-size:13px}
@@ -275,4 +300,15 @@ header{gap:8px;padding:0 10px}header>a{font-size:14px}header form{flex:1 1 90px}
 const sheet = new CSSStyleSheet();
 sheet.replaceSync(CSS);
 document.adoptedStyleSheets = [sheet];
+document.body.innerHTML = `<header><a href="#/">make.fun bounties</a><form><input name=u placeholder="Find a profile" aria-label="Find a profile"></form><output></output><button>Refresh</button></header>
+<main><section></section><section></section></main>`;
+document.forms[0].addEventListener('submit', (e) => {
+  e.preventDefault();
+  const u = e.target.u.value.trim().replace(/^@/, '');
+  if (u) location.hash = '#/u/' + encodeURIComponent(u);
+});
+document.querySelector('header button').addEventListener('click', () => route(true));
+addEventListener('hashchange', route);
 setInterval(tickCountdowns, 1e3);
+setInterval(() => document.hidden || route(), 6e4);
+route();
