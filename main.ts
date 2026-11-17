@@ -18,7 +18,7 @@ if (!existsSync(join(here, 'app', 'index.html'))) fail('app/index.html is missin
 const shots = existsSync(join(here, 'screenshots'))
   ? readdirSync(join(here, 'screenshots')).filter((f) => !f.startsWith('.') && /\.(jpe?g|png)$/i.test(f)).sort()
   : [];
-if (shots.length != 3) fail(`screenshots/ must hold exactly 3 JPEG or PNG images, it holds ${shots.length}.`);
+if (shots.length != 3) fail(`screenshots/ must hold exactly 3 JPEG or PNG images, it holds ${shots.length}${shots.length ? ` (${shots.join(', ')})` : ''}.`);
 for (const f of shots) {
   const bytes = statSync(join(here, 'screenshots', f)).size;
   if (bytes > 262144) fail(`screenshots/${f} is ${bytes} bytes, over the 256 KiB cap.`);
@@ -34,4 +34,4 @@ writeFileSync(join(out, 'dossier.json'), dossier);
 
 const bytes = Buffer.from(dossier);
 const totals = /Totals: ([^\n]*)/.exec(bytes.toString('utf8').replace(/\\n/g, '\n'))?.[1] ?? '';
-console.log(`main.ts: wrote ${join(out, 'dossier.json')} (${bytes.length} bytes), cover ${shots[0]}; ${totals}`);
+console.log(`main.ts: wrote ${join(out, 'dossier.json')} (${bytes.length} bytes, ${shots.length} screenshots, cover ${shots[0]}); ${totals}`);
