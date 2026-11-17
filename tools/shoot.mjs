@@ -71,6 +71,7 @@ try {
     };
     const { width, height } = shot.viewport;
     await s('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 600 });
+    if (shot.scheme) await s('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: shot.scheme }] });
     await Promise.all([s('Page.enable'), s('Runtime.enable'), s('Log.enable')]);
     const [first, ...then] = [...(shot.via ?? []), shot.path];
     await s('Page.navigate', { url: `http://localhost:${APP_PORT}/${first}` });
@@ -78,6 +79,12 @@ try {
     for (const hash of then) {
       await value(`location.hash = ${JSON.stringify(hash)}`);
       await settle(hash);
+    }
+    // Optional page steps (a click, a key press) for checking interactions; the entry's own shots use none.
+    for (const step of shot.steps ?? []) {
+      const said = await value(step);
+      if (said !== undefined) console.log(`  ${shot.file}: ${step} -> ${JSON.stringify(said)}`);
+      await settle(step);
     }
     await sleep(1500);
     let quality = 90, bytes;

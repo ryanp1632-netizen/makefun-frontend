@@ -132,12 +132,16 @@ export function avatarImg(image, handle, cls = 'av') {
   return img;
 }
 
-/** A score as its column means it: millionths (…_micro) read as a percentage, other values as numbers. */
+/** A score in its column's unit: millionths as a percentage, micro-USDC in dollars, lamports in SOL, µs in ms. */
 export function scoreText(column, value, display) {
   if (value == null && display == null) return '—';
-  if (/_micro$/.test(column?.source ?? '')) return (Number(value ?? display) / 1e4).toFixed(1) + '%';
-  const n = Number(value ?? display);
-  return Number.isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: 3 }) : String(display ?? value);
+  const n = Number(value ?? display), unit = `${column?.title} ${column?.source}`;
+  if (!Number.isFinite(n)) return String(display ?? value);
+  if (/_micro\b|millionths/.test(unit)) return (n / 1e4).toFixed(1) + '%';
+  if (/micro-?USDC/i.test(unit)) return (n < 0 ? '−' : '') + money(Math.abs(n) / 1e6);
+  if (/lamports/.test(unit)) return (n / 1e9).toLocaleString('en-US', { maximumFractionDigits: 3 }) + ' SOL';
+  if (/µs|_us\b/.test(unit)) return (n / 1e3).toLocaleString('en-US', { maximumFractionDigits: 1 }) + ' ms';
+  return n.toLocaleString('en-US', { maximumFractionDigits: 3 });
 }
 export const scoreName = (column) => (column?.title ?? 'Score').replace(/\s*\(.*\)\s*$/, '');
 
@@ -291,7 +295,7 @@ details summary{cursor:pointer;color:var(--ac);font-weight:650;margin-top:8px}
 .empty{padding:24px;color:var(--mu)}
 @media(max-width:900px){main{grid-template-columns:minmax(0,1fr);height:calc(100dvh - 52px)}
 [data-v=board] main>:last-child,[data-v=bounty] main>:first-child,[data-v=leaderboard] main>:first-child{display:none}
-header{gap:8px;padding:0 10px}header>a{font-size:14px}header form{flex:1 1 90px}output{font-size:10.5px;white-space:normal;text-align:right;line-height:1.2;max-width:150px}header button{display:none}
+header{gap:8px;padding:0 10px}header>a{font-size:14px}header>a span{display:none}header form{flex:1 1 90px}output{font-size:10.5px;white-space:normal;text-align:right;line-height:1.2;max-width:150px}header button{display:none}
 .bp{padding:14px}.cards,.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.two,.grid{grid-template-columns:minmax(0,1fr)}.top{flex-direction:column;gap:10px}
 .rw,.rw.nofee{grid-template-columns:52px minmax(0,1fr) 72px 84px;gap:6px}.rw.nofee{grid-template-columns:52px minmax(0,1fr) 84px}.rw>:nth-child(2){display:none}
 .find{flex-wrap:wrap}.find>span{flex:1 1 100%}.mini{gap:6px 16px}
@@ -300,7 +304,7 @@ header{gap:8px;padding:0 10px}header>a{font-size:14px}header form{flex:1 1 90px}
 const sheet = new CSSStyleSheet();
 sheet.replaceSync(CSS);
 document.adoptedStyleSheets = [sheet];
-document.body.innerHTML = `<header><a href="#/">make.fun bounties</a><form><input name=u placeholder="Find a profile" aria-label="Find a profile"></form><output></output><button>Refresh</button></header>
+document.body.innerHTML = `<header><a href="#/">make.fun<span> bounties</span></a><form><input name=u placeholder="Find a profile" aria-label="Find a profile"></form><output></output><button>Refresh</button></header>
 <main><section></section><section></section></main>`;
 document.forms[0].addEventListener('submit', (e) => {
   e.preventDefault();
