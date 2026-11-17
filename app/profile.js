@@ -1,60 +1,64 @@
-// An account's public profile from one request: who it is, its record, every entry grouped by bounty (best place
-// first, each linking back to its bounty and that bounty's leaderboard) and its payouts.
-import { cachedJSON, fmt, takesEntries, tickCountdowns } from './api.js';
+// An account's public profile: who it is, its record, its entries (each linking back to its bounty and that
+// bounty's leaderboard) and its payouts. One request, the first 12 bounties drawn and the rest on demand.
+import { cachedJSON } from './api.js';
+import { ago, avatarImg, esc, fmtDay, formatScore, money, ordinal, scoreTitle, takesEntries } from './ui.js';
 
-export default async function renderProfile(handle) {
-  const pane = document.querySelector('main').lastChild;
-  let p;
-  try {
-    p = await cachedJSON(`/profiles/${encodeURIComponent(handle)}`);
-  } catch (e) {
-    pane.innerHTML = `<article class=pf><h1>@${fmt.esc(handle)}</h1><p class=empty>No public profile found (${fmt.esc(e.message)}).</p></article>`;
-    return;
-  }
-  // One bounty: its title and state, then each entry's place, title, score and prize (or why there is none yet).
-  function renderBountyCard({ c, entries }) {
-    const s = encodeURIComponent(c.slug ?? ''), live = takesEntries(c), done = c.status == 'resolved';
-    const meta = live ? `closes in <time data-dl="${fmt.esc(c.deadline)}">${fmt.timeLeft(c.deadline)}</time> · ${fmt.money(c.pot_usd ?? c.reward_usd)} pot`
-      : `${done ? 'ended' : 'judging, closed'} ${fmt.day(c.deadline)} · ${fmt.money(c.reward_usd)} reward`;
-    return `<section class=ec><a href="#/bounty/${s}">${fmt.esc(c.title)}</a><small>${meta} · <a href="#/bounty/${s}/leaderboard">leaderboard</a></small><ol>${entries.map((e) => {
-      const prize = Number(e.prize_usd), status = live ? 'taking entries' : !done ? 'awaiting result' : 'no prize';
-      return `<li><span class="pl${prize ? (e.placement <= 3 ? ' top' : ' paid') : ''}">${e.placement ? '#' + e.placement : '—'}</span><span class=et title="${fmt.esc(e.title)}">${fmt.esc(e.title)}</span><span class=scv>${e.score ? fmt.score(e.score.column, e.score.value, e.score.display) : ''}</span>${prize ? `<span class=pz>${fmt.money(prize, true)}</span>` : `<span class="pz no">${status}</span>`}</li>`;
-    }).join('')}</ol></section>`;
-  }
-  const r = p.record ?? {}, all = p.solutions ?? [], groups = groupEntriesByBounty(all), pay = p.payouts ?? [];
-  const paid = groups.filter((g) => g.entries.some((s) => Number(s.prize_usd) > 0)).length, best = groups.find((g) => g.best == r.best_placement);
-  const link = (href, text) => `<a href="${fmt.esc(href)}" target=_blank rel=noopener>${fmt.esc(text)}</a>`, links = [
-    p.github_login && link(`https://github.com/${encodeURIComponent(p.github_login)}`, `GitHub ${p.github_login}`),
-    p.x?.url && link(p.x.url, `X @${p.x.username}`),
-    p.wallet?.address && link(p.wallet.explorer_url, `Wallet ${p.wallet.address.slice(0, 4)}…${p.wallet.address.slice(-4)}`),
-    link(`https://make.fun/u/${encodeURIComponent(p.handle)}`, 'Profile on make.fun ↗'),
-  ].filter(Boolean);
-  const card = (label, value, sub, cls = '') => `<div class=card><span>${label}</span><b class="${cls}">${value}</b><small>${fmt.esc(sub)}</small></div>`;
-  pane.innerHTML = `<article class=pf>
-<div class=hero><img class=av crossorigin=anonymous alt="" src="${fmt.esc(fmt.avatar(p.avatar?.url ?? p.image, p.handle))}"><div><h1>${fmt.esc(p.display_name || p.handle)}</h1>
-<p>@${fmt.esc(p.handle)} · joined ${fmt.day(p.joined_at, true)}${p.house ? ' · house account' : ''}${p.bio ? ' · ' + fmt.esc(p.bio) : ''}</p><p class=links>${links.join('')}</p></div></div>
-<div class="cards five">${card('Prizes won', fmt.money(r.prize_usd), `${pay.length} payout${pay.length == 1 ? '' : 's'}`, 'pot')}${card('Bounties entered', fmt.num(r.competitions_entered ?? groups.length), `${all.length} entries`)}${card('Placed', fmt.num(r.competitions_placed), `${paid} in a paid place`)}${card('Won', fmt.num(r.competitions_won), `${r.podium_finishes ?? 0} podium finishes`)}${card('Best place', r.best_placement ? '#' + r.best_placement : '—', best ? `in ${best.c.title}` : '')}</div>
-<h2>Entries by bounty <span>— ${all.length} entries in ${groups.length} bounties, best place first</span></h2>
-<div class=eg>${groups.map(renderBountyCard).join('') || '<p class=empty>No public entries yet.</p>'}</div>
-${pay.length ? `<section class="box payouts"><h2>Payouts</h2><p>${pay.length} paid in USDC on Solana</p><table class=rw><tbody>${pay.map((x) => `<tr><td><a href="#/bounty/${encodeURIComponent(x.competition?.slug ?? '')}">${fmt.esc(x.competition?.title)}</a></td><td>#${x.place}</td><td>${fmt.day(x.paid_at)}</td><td>${fmt.money(x.amount_usd, true)}</td><td><a href="${fmt.esc(x.explorer_url)}" target=_blank rel=noopener>transaction ↗</a></td></tr>`).join('')}</tbody></table></section>` : ''}
+export default async function showProfile(handle) {
+  renderProfile(await cachedJSON(`/profiles/${encodeURIComponent(handle)}`));
+}
+
+export function renderProfile(p) {
+  const r = p.record ?? {}, all = p.solutions ?? [], sol = groupEntriesByBounty(all), pay = p.payouts ?? [];
+  const stat = (label, v, cls = '') => `<div class=card><span>${label}</span><b class="${cls}">${v}</b></div>`;
+  const $detail = document.querySelector('main').lastChild;
+  document.title = `${p.handle} · make.fun board`;
+  $detail.innerHTML = `<article class=pad>
+<div class=crumb><a href="#/">Bounties</a> › Profile</div>
+<div class=ph>${avatarImg(p.avatar?.url ?? p.image, p.handle)}<div><h1>${esc(p.display_name || p.handle)}</h1>
+<div class=mu>@${esc(p.handle)} · joined ${fmtDay(p.joined_at)}${p.house ? ' · house account' : ''}</div></div></div>
+${p.bio ? `<p class=lede style="margin-top:12px">${esc(p.bio)}</p>` : ''}<div class="crumb">${renderProfileLinks(p)}</div>
+<div class=stats>${stat('Entered', r.competitions_entered ?? 0)}${stat('Placed', r.competitions_placed ?? 0)}${stat('Won', r.competitions_won ?? 0)}${stat('Podiums', r.podium_finishes ?? 0)}${stat('Best', r.best_placement ? ordinal(r.best_placement) : '—')}${stat('Earned', money(r.prize_usd), 'pot')}</div>
+<div class=cols><section><h2>Entries · ${all.length} in ${sol.length} bounties</h2><ol class=ent>${sol.slice(0, PAGE).map(renderEntryLine).join('')}</ol>${sol.length > PAGE ? `<p><button class=btn>Show all ${sol.length} bounties</button></p>` : ''}${sol.length ? '' : '<p class=mu>No public entries yet.</p>'}</section>
+<section><h2>Payouts · ${pay.length}</h2><ol class=ent>${pay.map((x) => `<li><a class=t href="#/bounty/${encodeURIComponent(x.competition?.slug ?? '')}"><b>${esc(x.competition?.title)}</b><small>${ordinal(x.place)} place · paid ${fmtDay(x.paid_at)}</small></a><div class=r><b class=pot>${money(x.amount_usd)}</b></div></li>`).join('') || '<li class=mu>No payouts yet.</li>'}</ol></section></div>
 </article>`;
-  scrollTo(0, 0);
-  document.title = `${p.handle} · make.fun bounties`;
-  tickCountdowns();
+  $detail.querySelector('button.btn')?.addEventListener('click', (e) => {
+    $detail.querySelector('.ent').insertAdjacentHTML('beforeend', sol.slice(PAGE).map(renderEntryLine).join(''));
+    e.target.remove();
+  });
+  $detail.scrollTop = 0;
 }
 
-/** The entries by bounty: each bounty's entries best place first, the bounties by their best place, then newest. */
-function groupEntriesByBounty(solutions) {
+/** One line per bounty: its best-placed entry (else its newest), with how many entries the account made there. */
+function groupEntriesByBounty(sol) {
   const by = new Map();
-  for (const s of solutions) {
-    const slug = s.competition?.slug ?? '';
-    if (!by.has(slug)) by.set(slug, { c: s.competition ?? {}, entries: [] });
-    by.get(slug).entries.push(s);
+  for (const s of sol) {
+    const k = s.competition?.slug, g = by.get(k);
+    if (!g) by.set(k, { ...s, count: 1 });
+    else {
+      g.count++;
+      if (s.placement && (!g.placement || s.placement < g.placement)) by.set(k, { ...s, count: g.count });
+    }
   }
-  const place = (s) => s.placement ?? Infinity;
-  for (const g of by.values()) {
-    g.entries.sort((x, y) => place(x) - place(y) || (x.entered_at < y.entered_at ? 1 : -1));
-    g.best = g.entries[0].placement;
-  }
-  return [...by.values()].sort((x, y) => (x.best ?? Infinity) - (y.best ?? Infinity) || (x.c.deadline < y.c.deadline ? 1 : -1));
+  return [...by.values()];
 }
+
+function renderEntryLine(s) {
+  const c = s.competition ?? {}, slug = encodeURIComponent(c.slug ?? '');
+  const live = takesEntries({ status: c.status, deadline: c.deadline });
+  const badge = s.placement ? `<span class="badge ${s.placement <= 3 ? 'gold' : 'in'}">${ordinal(s.placement)} place</span>`
+    : `<span class=badge>${live ? 'taking entries' : c.status == 'resolved' ? 'unplaced' : 'judging'}</span>`;
+  return `<li><a class=t href="#/bounty/${slug}"><b>${esc(s.title)}</b><small>${esc(c.title)} · ${s.count > 1 ? `${s.count} entries` : `entered ${ago(s.entered_at)}`}</small></a>
+<div class=r>${badge}${s.prize_usd ? `<b class=pot>${money(s.prize_usd)}</b>` : ''}${s.score ? `<span class=mu>${esc(scoreTitle(s.score.column))} <b style="color:var(--tx)">${formatScore(s.score.column, s.score.value, s.score.display)}</b></span>` : ''}<a href="#/bounty/${slug}/leaderboard">leaderboard →</a></div></li>`;
+}
+
+function renderProfileLinks(p) {
+  const out = [], a = (href, text) => `<a href="${esc(href)}" target=_blank rel=noopener>${esc(text)}</a>`;
+  if (p.github_login) out.push(a(`https://github.com/${encodeURIComponent(p.github_login)}`, `GitHub ${p.github_login}`));
+  if (p.x?.url) out.push(a(p.x.url, `X @${p.x.username}`));
+  if (p.discord?.url) out.push(a(p.discord.url, `Discord ${p.discord.username}`));
+  if (p.wallet?.address) out.push(a(p.wallet.explorer_url, `Wallet ${p.wallet.address.slice(0, 4)}…${p.wallet.address.slice(-4)}`));
+  out.push(a(`https://make.fun/u/${encodeURIComponent(p.handle)}`, 'on make.fun ↗'));
+  return out.join(' · ');
+}
+
+const PAGE = 12;
