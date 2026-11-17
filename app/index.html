@@ -2,17 +2,45 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="dark">
-<title>make.fun · live bounty board</title>
+<title>make.fun bounties</title>
 <style>
-:root{--bg:#0a0c10;--pn:#12151d;--ln:#232a3a;--tx:#eef1f6;--mu:#a3adbf;--ac:#c4f25a;--pot:#5ee39a;--fee:#ffc95c;--hot:#ff7070;font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums;color:var(--tx);background:var(--bg)}
-body{margin:0}a{color:inherit}
-header{display:flex;align-items:center;gap:18px;height:52px;padding:0 18px;border-bottom:1px solid var(--ln);background:#0d1016}
-header>a{font-weight:800;font-size:17px;white-space:nowrap;text-decoration:none}header b{color:var(--ac)}
-nav a{color:var(--mu);text-decoration:none;font-size:14px}
-output{margin-left:auto;font-size:12.5px;color:var(--mu);border:1px solid var(--ln);border-radius:99px;padding:4px 11px}
+body{margin:0;font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:center;gap:14px;height:52px;padding:0 20px;background:#13161b;color:#fff}
+header>a{color:#fff;font-weight:750;font-size:16px;text-decoration:none}
+header input{font:inherit;border:1px solid #3a404b;border-radius:8px;background:#20242c;color:#fff;padding:6px 10px}
+output{margin-left:auto;color:#c3c9d3;font-size:12.5px}
 </style>
-<header><a href="#/">make<b>.fun</b> board</a><nav><a href="#/">Live bounties</a></nav><output></output></header>
+<header><a href="#/">make.fun bounties</a><form><input name=u placeholder="Find a profile" aria-label="Find a profile"></form><output>loading…</output><button>Refresh</button></header>
 <main><section></section><section></section></main>
-<script type="module" src="boot.js"></script>
+<script type=module>// hash router: 4 routes; a view = 1 import() + 1 API request, the rest from memory
+const ROUTES = [
+  [/^#\/u\/([^/?]+)/, 'profile', () => import('./profile.js')],
+  [/^#\/bounty\/([^/?]+)\/leaderboard/, 'leaderboard', () => import('./leaderboard.js')],
+  [/^#\/bounty\/([^/?]+)/, 'bounty', () => import('./bounty.js')],
+  [/^/, 'board', () => import('./board.js')],
+];
+let seq = 0;
+async function route(again) {
+  const my = ++seq, hash = location.hash, [re, name, load] = ROUTES.find(([re]) => re.test(hash));
+  window.__shotReady = false;
+  document.body.dataset.v = name;
+  try {
+    const [api, view] = await Promise.all([import('./api.js'), load()]);
+    api.startView(again === true);
+    await view.default(decodeURIComponent(hash.match(re)[1] ?? ''));
+  } catch (e) {
+    document.querySelector('main').lastChild.textContent = 'Could not load this view: ' + e.message;
+  }
+  if (my == seq) window.__shotReady = true;
+}
+document.forms[0].addEventListener('submit', (e) => {
+  e.preventDefault();
+  const u = e.target.u.value.trim().replace(/^@/, '');
+  if (u) location.hash = '#/u/' + encodeURIComponent(u);
+});
+document.querySelector('header button').addEventListener('click', () => route(true));
+addEventListener('hashchange', route);
+setInterval(() => document.hidden || route(), 6e4);
+route();
+</script>
 </html>

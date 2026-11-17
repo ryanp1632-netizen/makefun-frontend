@@ -1,93 +1,98 @@
-// A bounty's page: status, the four numbers that matter (live pot, entry fee, time left, entries), the rewards
-// table as it stands with fees, the dates, how it is judged, its description and its rules (rendered on open).
-import { cachedJSON } from './api.js';
-import { ago, esc, fmtDate, money, ordinal, potOf, statusPill, takesEntries } from './ui.js';
+// A bounty's page beside the board: status, the four numbers that matter (live pot, entry fee, time left, entries),
+// the rewards table with base, fee share and pays now, the dates and phases with a live "Now" marker, the description
+// and the rules. It paints at once from the board's answer, then one request (?submissions=summary) adds the phases,
+// the passed-checks count and the rules, patching only the parts that changed.
+import { showBoard, syncBoardRow } from './board.js';
+import { cachedJSON, esc, fmtDate, fmtDay, markdown, money, num, patchHTML, potOf, relTime, statCard, takesEntries, tickCountdowns } from './api.js';
 
-export default async function showBounty(slug) {
-  const b = await cachedJSON(`/competitions/${encodeURIComponent(slug)}?submissions=summary`);
-  renderBountyPanel(b, true);
-  document.title = `${b.title} · make.fun board`;
+/** #/bounty/<slug>: one API request; the board beside it comes from memory. */
+function renderBounty(slug) {
+  let full = false;
+  const wide = matchMedia('(min-width:901px)').matches;
+  const fromBoard = wide && showBoard(slug).then((b) => !full && b?.slug == slug && paintBounty(b, null));
+  const detail = cachedJSON(`/competitions/${encodeURIComponent(slug)}?submissions=summary`).then((d) => {
+    full = true;
+    paintBounty(d, d);
+    if (wide) fromBoard.then(() => syncBoardRow(d));
+  });
+  return Promise.all([fromBoard, detail]);
 }
 
-export function renderBountyPanel(b, full) {
-  const fees = Number(b.entryFeesUsd || 0), fee = Number(b.entryFeeUsd || 0);
-  const last = b.submissions?.reduce?.((m, s) => (s.createdAt > m ? s.createdAt : m), '');
-  const slug = encodeURIComponent(b.slug), $detail = document.querySelector('main').lastChild;
-  $detail.innerHTML = `<article class=pad>
-<div class=crumb><a href="#/">Bounties</a> › ${esc(b.category ?? 'Bounty')} · by ${esc(b.sponsor?.name ?? 'make.fun')}</div>
-<h1>${esc(b.title)}</h1><p class=lede>${esc(b.summary)}</p>${statusPill(b)}
-<div class=cards>
-<div class=card><span>Live pot</span><b class=pot>${money(potOf(b))}</b><small>${fees ? `${money(b.rewardAmount)} + ${money(fees)} fees` : 'fixed reward'}</small></div>
-<div class=card><span>Entry fee</span><b class=fee>${fee ? money(fee) : '<span class=free>Free</span>'}</b><small>${fee ? `${(b.entryFeePayers ?? 0).toLocaleString('en-US')} paid` : 'no fee to enter'}</small></div>
-<div class=card><span>Time left</span><b><time data-dl="${esc(b.deadline)}"></time></b><small>${takesEntries(b) ? 'until entries close' : 'entries closed'}</small></div>
-<div class=card><span>Entries</span><b>${(b.submissionCount ?? 0).toLocaleString('en-US')}</b><small>${b.submissionsPassed != null ? `${b.submissionsPassed.toLocaleString('en-US')} passed checks` : last ? 'last ' + ago(last) : '—'}</small></div>
-</div>
-<div class=acts><a class="btn go" href="#/bounty/${slug}/leaderboard">Full leaderboard →</a>${full ? '' : `<a class=btn href="#/bounty/${slug}">Rules &amp; details</a>`}<a class=btn href="https://make.fun/bounty/${slug}" target=_blank rel=noopener>${takesEntries(b) ? 'Enter on make.fun ↗' : 'Open on make.fun ↗'}</a></div>
-<div class=cols><section><h2>Rewards now</h2><table><thead><tr><th>Place</th><th>Base</th><th>Fee share</th><th>Amount</th></tr></thead><tbody>${renderRewardsTable(b)}</tbody></table></section>
-<section><h2>Dates</h2><ol class=dates>${renderDates(b)}</ol></section></div>
-${b.resolution?.summary ? `<h2>How it is judged</h2><p class=md>${esc(b.resolution.summary)}</p>` : ''}
-${full ? `<h2>Description</h2><div class=md>${markdownToHtml(b.description)}</div>${b.rules ? `<details><summary>Full rules (${Math.round(b.rules.length / 1024)} KB)</summary><div class=md></div></details>` : ''}` : ''}
-</article>`;
-  const rules = $detail.querySelector('details');
-  rules?.addEventListener('toggle', () => rules.open && !rules.lastChild.firstChild && (rules.lastChild.innerHTML = markdownToHtml(b.rules)), { once: true });
-  $detail.scrollTop = 0;
-}
-
-/** Places with equal amounts folded into one row ("4th–10th"), each with its base, fee share and amount now. */
-function renderRewardsTable(b) {
-  const list = b.rewardsNow ?? Object.entries(b.rewards ?? {}).map(([place, usd]) => ({ place: +place, baseUsd: usd, feeShareUsd: 0, amountUsd: usd }));
-  const groups = [];
+/** Places with the same payout folded into one row (#4–10), each with base, fee share, pays now and a bar. */
+function renderRewards(b) {
+  const list = (b.rewardsNow ?? Object.entries(b.rewards ?? {}).map(([p, usd]) => ({ place: +p, baseUsd: usd, feeShareUsd: 0, amountUsd: usd })))
+    .map((r) => ({ place: r.place, base: Number(r.baseUsd), share: Number(r.feeShareUsd) || 0, pays: Number(r.amountUsd) }));
+  if (!list.length) return '<h2>Rewards</h2><p>No rewards listed.</p>';
+  const groups = [], total = { base: 0, share: 0, pays: 0 };
   for (const r of list) {
     const g = groups.at(-1);
-    if (g && g.r.amountUsd == r.amountUsd && g.r.baseUsd == r.baseUsd && g.to == r.place - 1) g.to = r.place;
-    else groups.push({ from: r.place, to: r.place, r });
+    if (g && g.pays == r.pays && g.base == r.base && g.to == r.place - 1) g.to = r.place;
+    else groups.push({ ...r, to: r.place });
+    for (const k in total) total[k] += r[k];
   }
-  return groups.map(({ from, to, r }) =>
-    `<tr><td>${ordinal(from)}${to > from ? '–' + ordinal(to) : ''}</td><td>${money(r.baseUsd)}</td><td>${Number(r.feeShareUsd) ? '+' + money(r.feeShareUsd) : '—'}</td><td>${money(r.amountUsd)}${to > from ? '<small class=mu> each</small>' : ''}</td></tr>`).join('');
+  const top = Math.max(...list.map((r) => r.pays)), cls = total.share ? 'rw' : 'rw nofee';
+  return `<h2>Rewards</h2><p>${list.length} paid place${list.length == 1 ? '' : 's'} share the ${takesEntries(b) ? 'live ' : ''}pot of <b class=pot>${money(potOf(b))}</b></p>
+<div class="${cls} th"><span>PLACE</span><span></span><span>BASE</span><span class=fs>FEE SHARE</span><span>PAYS NOW</span></div>
+${groups.map((g) => `<div class="${cls}"><b>#${g.place}${g.to > g.place ? '–' + g.to : ''}</b><i style="width:${((g.pays / top) * 100).toFixed(1)}%"></i><span>${money(g.base)}</span><span class=fs>+${money(g.share)}</span><b class=pot>${money(g.pays)}${g.to > g.place ? ' <small>each</small>' : ''}</b></div>`).join('')}
+<div class="${cls}"><b>Total</b><span></span><span>${money(total.base)}</span><span class=fs>+${money(total.share)}</span><b class=pot>${money(total.pays)}</b></div>`;
 }
 
-/** The bounty's dates in time order, the ones already past marked. */
-function renderDates(b) {
-  const at = [[b.opensAt ?? b.publishedAt, 'Opened', '']];
-  for (const p of b.phases ?? []) {
-    if (p.startsAt && p.key != 'dev') at.push([p.startsAt, `${p.title} phase starts`, p.scores == 'live' ? 'scores live' : 'scores after it ends']);
-  }
-  at.push([b.deadline, 'Entry deadline', 'last moment to enter']);
-  const fin = (b.phases ?? []).at(-1);
-  if (fin?.endsAt) at.push([fin.endsAt, 'Results by', fin.finalizedAt ? 'finalized' : 'published automatically']);
-  if (b.resolvedAt) at.push([b.resolvedAt, 'Resolved', '']);
-  const now = new Date().toISOString();
-  return at.filter(([t]) => t).sort(([x], [y]) => (x < y ? -1 : 1))
-    .map(([t, label, sub]) => `<li class="${t <= now ? 'on' : ''}"><b>${label}</b><small>${fmtDate(t)}${sub ? ' · ' + sub : ''}</small></li>`).join('');
+/** The dates and phases in time order, past ones filled, with a red "Now" marker where today falls. */
+function renderTimeline(b, d) {
+  const at = new Map(), add = (t, label, sub = '') => t && at.set(t, at.has(t) ? { label: at.get(t).label + ' · ' + label, sub: at.get(t).sub || sub } : { label, sub });
+  add(d?.opensAt ?? b.publishedAt, 'Opened');
+  for (const p of d?.phases ?? []) add(p.startsAt, `${p.title} phase`, p.scores == 'live' ? 'scores live' : 'scored after it ends');
+  add(b.deadline, 'Deadline', 'entries close');
+  const fin = d?.phases?.at(-1);
+  if (fin?.endsAt) add(fin.endsAt, fin.finalizedAt ? 'Results published' : 'Results by', fin.finalizedAt ? '' : 'published automatically');
+  if (d?.resolvedAt) add(d.resolvedAt, 'Resolved');
+  const now = new Date().toISOString(), items = [...at].sort(([x], [y]) => (x < y ? -1 : 1));
+  const i = items.findIndex(([t]) => t > now);
+  if (i >= 0) items.splice(i, 0, [now, { now: true }]);
+  return `<h2>Dates and phases</h2><ol class=tl>${items.map(([t, e]) => e.now
+    ? `<li class=now><b>Now</b><small>${takesEntries(b) ? `<span data-dl="${esc(b.deadline)}" data-fmt=short></span> until entries close` : 'entries closed, judging'}</small></li>`
+    : `<li class="${t <= now ? 'past' : ''}"><b>${esc(e.label)}</b><small>${fmtDate(t)} · ${relTime(t)}${e.sub ? ' · ' + e.sub : ''}</small></li>`).join('')}</ol>`;
 }
 
-/** A small Markdown subset (headings, lists, code, emphasis, links), escaped first, for descriptions and rules. */
-function markdownToHtml(src) {
-  const inline = (s) => esc(s)
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
-    .replace(/\[([^\]]+)\]\(((?:https:\/\/|\/)[^)\s]+)\)/g, (_, t, u) => `<a href="${u[0] == '/' ? 'https://make.fun' + u : u}" target=_blank rel=noopener>${t}</a>`);
-  let html = '', list = '', code = null;
-  const close = () => list && ((html += `</${list}>`), (list = ''));
-  for (const line of String(src ?? '').split('\n')) {
-    if (line.startsWith('```')) {
-      close();
-      if (code == null) code = '';
-      else (html += `<pre><code>${esc(code)}</code></pre>`), (code = null);
-      continue;
-    }
-    if (code != null) {
-      code += line + '\n';
-      continue;
-    }
-    const h = line.match(/^(#{1,4})\s+(.*)/), li = line.match(/^\s*(?:[-*]|(\d+)\.)\s+(.*)/);
-    if (h) close(), (html += `<h4>${inline(h[2])}</h4>`);
-    else if (li) {
-      const tag = li[1] ? 'ol' : 'ul';
-      if (list != tag) close(), (html += `<${(list = tag)}>`);
-      html += `<li>${inline(li[2])}</li>`;
-    } else if (line.trim()) close(), (html += `<p>${inline(line)}</p>`);
-    else close();
-  }
-  return close(), html;
+/** The four stat cards: each number with the line that explains it. */
+function renderCards(b, d) {
+  const live = takesEntries(b), fee = Number(b.entryFeeUsd) || 0, fees = Number(b.entryFeesUsd) || 0;
+  const last = (b.submissions ?? []).reduce((m, s) => (s.createdAt > m ? s.createdAt : m), '');
+  return statCard(live ? 'LIVE POT' : 'POT', money(potOf(b)), fees ? `${money(b.rewardAmount)} reward + ${money(fees)} fees` : 'the reward, no entry fees', 'pot')
+    + statCard('ENTRY FEE', fee ? money(fee) : 'Free', fee ? `${num(b.entryFeePayers)} paid, once per account` : 'no fee to enter', fee ? 'fee' : '')
+    + (live ? statCard('TIME LEFT', `<span data-dl="${esc(b.deadline)}" data-fmt=short></span>`, `closes ${fmtDate(b.deadline)}`)
+      : statCard('ENDED', fmtDay(b.deadline), b.status == 'resolved' ? 'results published' : 'judging, results pending'))
+    + statCard('ENTRIES', num(b.submissionCount), d?.submissionsPassed != null ? `${num(d.submissionsPassed)} passed the checks` : last ? `last entry ${relTime(last)}` : 'none yet');
 }
+
+/** Paint or patch the pane: a new bounty gets the frame, then each part is rewritten only if its HTML changed. */
+export function paintBounty(b, d) {
+  const pane = document.querySelector('main').lastElementChild, slug = encodeURIComponent(b.slug), live = takesEntries(b);
+  if (pane.dataset.slug != b.slug || !pane.querySelector('.bp')) {
+    pane.dataset.slug = b.slug;
+    pane.innerHTML = `<article class=bp><div class=head></div><p class=lede></p><div class=cards></div>
+<div class=two><section class=box data-part=rewards></section><section class=box data-part=dates></section></div>
+<section class="box md" data-part=desc></section></article>`;
+    pane.scrollTop = 0;
+  }
+  document.title = b.title + ' · make.fun bounties';
+  const status = live ? '<span class="tag live">Open, taking entries</span>'
+    : b.status == 'resolved' ? `<span class=tag>Resolved${d?.resolvedAt ? ' ' + fmtDay(d.resolvedAt) : ''}</span>` : '<span class="tag wait">Entries closed, judging</span>';
+  const won = b.winner?.handle ? `<span class=tag>won by <a href="#/u/${encodeURIComponent(b.winner.handle)}">@${esc(b.winner.handle)}</a></span>` : '';
+  patchHTML(pane.querySelector('.head'), `<div class=chips><a class=crumb href="#/">Bounties</a><span class=tag>${esc(b.category ?? 'Bounty')}</span>${status}${won}<span class=tag>by ${esc(b.sponsor?.name ?? 'make.fun')}</span></div>
+<div class=top><h1>${esc(b.title)}</h1><a class="btn go" href="https://make.fun/bounty/${slug}" target=_blank rel=noopener>${live ? 'Enter on make.fun' : 'Open on make.fun'} ↗</a></div>
+<nav class=tabs><a href="#/bounty/${slug}" aria-current=page>Overview</a><a href="#/bounty/${slug}/leaderboard">Leaderboard<b>${num(b.submissionCount)}</b></a></nav>`);
+  patchHTML(pane.querySelector('.lede'), esc(b.summary));
+  patchHTML(pane.querySelector('.cards'), renderCards(b, d));
+  patchHTML(pane.querySelector('[data-part=rewards]'), renderRewards(b));
+  patchHTML(pane.querySelector('[data-part=dates]'), renderTimeline(b, d));
+  patchHTML(pane.querySelector('[data-part=desc]'), `<h2>Description</h2>${markdown(b.description)}${d?.rules ? `<details><summary>Full rules (${Math.round(d.rules.length / 1024)} KB)</summary><div></div></details>` : ''}`);
+  const rules = pane.querySelector('details');
+  if (rules && !rules.dataset.wired) {
+    rules.dataset.wired = 1;
+    rules.addEventListener('toggle', () => rules.open && !rules.lastChild.firstChild && (rules.lastChild.innerHTML = markdown(d.rules)));
+  }
+  tickCountdowns();
+}
+
+export default renderBounty;

@@ -1,3 +1,4 @@
+# hand-in runs (MAKEFUN_OUTPUT_DIR=out node main.ts) and local noise
 out/
 out*/
 node_modules/

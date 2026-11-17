@@ -1,107 +1,118 @@
-// The board: the live bounties, sortable and filterable, built once and then patched row by row, so moving between
-// bounties, re-sorting and the minute's revalidation never rebuild the list.
-import { BOARD, cachedJSON } from './api.js';
-import { ago, esc, money, potOf, takesEntries, timeLeft } from './ui.js';
+// The board: every bounty from one API answer, Live and Ended tabs, sort chips, a filter and category chips. Built
+// once, then patched row by row: re-sorting and filtering move the existing rows, and the minute's refresh rewrites
+// only the rows whose data changed. Countdowns tick in place (api.js tickCountdowns).
+import { BOARD, cachedJSON, esc, fmtDay, money, num, patchHTML, potOf, takesEntries, tickCountdowns } from './api.js';
 
-export default async function showBoard(slug, routeName) {
-  state.route = routeName;
-  const data = await cachedJSON(BOARD);
-  if (!rowEls.size) renderBoard();
-  patchBoardRows(data.items);
-  selectRow(slug || state.sel || (sortFilterBounties().find(takesEntries) ?? sortFilterBounties()[0])?.slug);
-  if (routeName == 'board' && matchMedia('(min-width:861px)').matches) {
-    const b = state.items.find((x) => x.slug == state.sel);
-    if (b) (await import('./bounty.js')).renderBountyPanel(b);
-  }
-}
-
+/** #/ : the board, and on a wide screen the closing-soonest bounty's overview beside it (from the same answer). */
 function renderBoard() {
-  $list().innerHTML = `<div class=sum></div>
-<div class=ctl><input type=search placeholder="Filter bounties by title or category" aria-label="Filter bounties"><kbd>/</kbd><kbd>j</kbd><kbd>k</kbd></div>
-<div class=chips></div>
-<div class=th><button data-k=title>Bounty</button><button data-k=pot>Live pot</button><button data-k=fee>Fee</button><button data-k=dl>Time left</button><button data-k=n>Entries</button></div>
-<ol class=rows></ol><h3 class=sec>Past deadline · results pending</h3><ol class="rows past"></ol>
-<p class=facts>First load 1.4 KB gzip: index.html + boot.js. Views load on demand; API answers kept in memory and revalidated by ETag; rows patched in place; countdowns tick without re-rendering. Keys: / filter · j k or ↑ ↓ move · ↵ open.</p>`;
-  q('input').addEventListener('input', (e) => ((state.q = e.target.value.toLowerCase()), orderRowsInPlace()));
-  q('.th').addEventListener('click', (e) => {
-    const k = e.target.dataset?.k;
-    if (!k) return;
-    state.dir = state.sort == k ? -state.dir : k == 'dl' || k == 'title' ? 1 : -1;
-    state.sort = k;
-    orderRowsInPlace();
+  return showBoard(state.sel).then(async (b) => {
+    if (b && matchMedia('(min-width:901px)').matches) (await import('./bounty.js')).paintBounty(b, null);
   });
-  q('.chips').addEventListener('click', (e) => {
-    if (e.target.dataset.c == null) return;
-    state.cat = e.target.dataset.c;
-    orderRowsInPlace();
-  });
-  addEventListener('keydown', boardKeys);
-  setInterval(revalidateBoardEachMinute, 6e4);
 }
 
-/** Patch rows in place: a new bounty gets a row, a changed one has only its changed fields rewritten. */
-export function patchBoardRows(items) {
+/** Rows are created once per bounty; a row's HTML is rewritten only when its bounty's numbers change. */
+function patchBoardRows(items) {
   state.items = items;
   for (const b of items) {
     let a = rowEls.get(b.slug);
     if (!a) {
       a = document.createElement('a');
       a.className = 'row';
-      a.href = `#/bounty/${encodeURIComponent(b.slug)}`;
-      a.dataset.slug = b.slug;
-      a.innerHTML = `<span class=t><b></b><small></small></span><span class=pot></span><span class=fee></span><span><time></time><i class=bar data-bar></i></span><span class=n></span>`;
+      a.href = '#/bounty/' + encodeURIComponent(b.slug);
       rowEls.set(b.slug, a);
     }
-    const [t, pot, fee, tl, n] = a.children;
-    const fees = Number(b.entryFeesUsd || 0);
-    const last = b.submissions?.reduce((m, s) => (s.createdAt > m ? s.createdAt : m), '');
-    setText(t.firstChild, b.title);
-    setText(t.lastChild, `${b.category ?? 'Bounty'} · ${b.status == 'open' && !takesEntries(b) ? 'judging' : last ? 'last entry ' + ago(last) : 'no entries yet'}`);
-    setHTML(pot, `${money(potOf(b))}${fees ? `<small>+${money(fees)} fees</small>` : ''}`);
-    setHTML(fee, Number(b.entryFeeUsd) ? money(b.entryFeeUsd) : '<span class=free>free</span>');
-    tl.firstChild.dataset.dl = tl.lastChild.dataset.dl = b.deadline;
-    if (!tl.firstChild.textContent) tl.firstChild.textContent = timeLeft(b.deadline);
-    setHTML(n, `${b.submissionCount.toLocaleString('en-US')}<small>entries</small>`);
+    patchHTML(a, rowHTML(b));
   }
   for (const [slug, a] of rowEls) if (!items.some((b) => b.slug == slug)) a.remove(), rowEls.delete(slug);
-  orderRowsInPlace();
-  renderSummaryStrip();
+  sortFilterRows();
 }
 
-/** Order the existing row nodes by the sort and filter: nodes are moved, never rebuilt. */
-function orderRowsInPlace() {
-  const [open, past] = $list().querySelectorAll('ol');
-  const shown = sortFilterBounties();
+/** Sort and filter by moving the existing row nodes: nothing is rebuilt. */
+function sortFilterRows() {
+  const $ = side(), list = $.querySelector('.rows'), shown = visibleBounties();
   for (const a of rowEls.values()) a.hidden = true;
   for (const b of shown) {
     const a = rowEls.get(b.slug);
     a.hidden = false;
-    (takesEntries(b) ? open : past).append(a);
+    list.append(a);
   }
-  q('.sec').hidden = !shown.some((b) => !takesEntries(b));
-  for (const btn of $list().querySelectorAll('.th button'))
-    btn.dataset.k == state.sort ? btn.setAttribute('aria-sort', state.dir > 0 ? 'ascending' : 'descending') : btn.removeAttribute('aria-sort');
+  $.querySelector('.empty').hidden = shown.length > 0;
+  const live = state.items.filter(takesEntries), inTab = state.tab == 'live' ? live : state.items.filter((b) => !takesEntries(b));
+  patchHTML($.querySelector('[data-tab=live]'), `Live <b>${live.length}</b>`);
+  patchHTML($.querySelector('[data-tab=ended]'), `Ended <b>${state.items.length - live.length}</b>`);
+  for (const t of $.querySelectorAll('[data-tab]')) t.setAttribute('aria-selected', t.dataset.tab == state.tab);
+  for (const c of $.querySelectorAll('[data-sort]')) c.setAttribute('aria-pressed', c.dataset.sort == state.sort);
   const cats = {};
-  for (const b of state.items) cats[b.category] = (cats[b.category] || 0) + 1;
-  q('.chips').innerHTML = [['', 'All', state.items.length], ...Object.keys(cats).sort().map((c) => [c, c, cats[c]])]
-    .map(([c, label, n]) => `<button data-c="${esc(c)}" aria-pressed=${state.cat == c}>${esc(label)} ${n}</button>`)
-    .join('');
-}
-
-function sortFilterBounties() {
-  const key = SORTS[state.sort];
-  return state.items
-    .filter((b) => (!state.cat || b.category == state.cat) && (!state.q || `${b.title} ${b.category} ${b.summary}`.toLowerCase().includes(state.q)))
-    .sort((a, b) => (key(a) > key(b) ? 1 : key(a) < key(b) ? -1 : 0) * state.dir);
-}
-
-function renderSummaryStrip() {
-  const live = state.items.filter(takesEntries);
+  for (const b of inTab) cats[b.category] = (cats[b.category] || 0) + 1;
+  patchHTML($.querySelector('[data-group=cat]'), [['', 'All', inTab.length], ...Object.keys(cats).sort().map((c) => [c, c, cats[c]])]
+    .map(([c, label, n]) => `<button class=chip data-cat="${esc(c)}" aria-pressed=${state.cat == c}>${esc(label)}<b>${n}</b></button>`).join(''));
   const next = live.reduce((m, b) => (!m || b.deadline < m.deadline ? b : m), null);
-  q('.sum').innerHTML = `<div><b>${live.length}</b><span>taking entries</span></div>
+  patchHTML($.querySelector('.sum'), `<div><b>${live.length} live</b><span>taking entries</span></div>
 <div><b class=pot>${money(live.reduce((s, b) => s + potOf(b), 0))}</b><span>in live pots</span></div>
-<div><b>${live.reduce((s, b) => s + b.submissionCount, 0).toLocaleString('en-US')}</b><span>entries so far</span></div>
-<div><b><time data-dl="${next?.deadline ?? ''}">${next ? timeLeft(next.deadline) : '—'}</time></b><span title="${esc(next?.title)}">next deadline</span></div>`;
+<div><b>${num(live.reduce((s, b) => s + b.submissionCount, 0))}</b><span>entries in them</span></div>
+<div><b data-dl="${esc(next?.deadline ?? '')}" data-fmt=short></b><span>next deadline</span></div>`);
+  tickCountdowns();
+}
+
+/** The board beside any bounty view: one cached answer, the row of `slug` selected. Returns that bounty. */
+export async function showBoard(slug) {
+  const data = await cachedJSON(BOARD);
+  if (!rowEls.size) buildBoard();
+  patchBoardRows(data.items ?? []);
+  const shown = visibleBounties();
+  const b = data.items.find((x) => x.slug == slug) ?? shown[0];
+  if (b && !takesEntries(b) && state.tab == 'live' && b.slug == slug) state.tab = 'ended', sortFilterRows();
+  selectRow(b?.slug);
+  tickCountdowns();
+  return b;
+}
+
+/** A bounty's own answer (fetched later) carries fresher numbers: copy them into its row and patch that row only. */
+export function syncBoardRow(d) {
+  const b = state.items.find((x) => x.slug == d.slug), a = rowEls.get(d.slug);
+  if (!b || !a) return;
+  for (const k of ['potUsd', 'entryFeesUsd', 'entryFeePayers', 'submissionCount', 'rewardsNow', 'status', 'deadline']) if (d[k] != null) b[k] = d[k];
+  patchHTML(a, rowHTML(b));
+  sortFilterRows();
+}
+
+function rowHTML(b) {
+  const live = takesEntries(b), fee = Number(b.entryFeeUsd) || 0;
+  const badge = live ? `<span class="tag hot" data-soon="${esc(b.deadline)}" hidden>closing soon</span>`
+    : b.status == 'resolved' ? '<span class=tag>resolved</span>' : '<span class="tag wait">judging</span>';
+  const when = live ? `<span data-dl="${esc(b.deadline)}"></span>` : `<span>ended ${fmtDay(b.deadline)}</span>`;
+  const winner = b.winner?.handle ? `<span>won by @${esc(b.winner.handle)}</span>` : '';
+  return `<div class=rt><b>${esc(b.title)}</b>${badge}<small>${esc(b.category ?? '')}</small></div>
+<div class=rm><span class=pot>${money(potOf(b))} ${live ? 'pot' : 'paid'}</span>${fee ? `<span class=fee>${money(fee)} fee</span>` : '<span>no fee</span>'}${when}<span>${num(b.submissionCount)} entries</span>${winner}</div>`;
+}
+
+function buildBoard() {
+  const $ = side();
+  $.innerHTML = `<div class=bh><div class=sum></div>
+<div class=tabs role=tablist><button role=tab data-tab=live></button><button role=tab data-tab=ended></button></div>
+<div class=chips data-group=sort>${SORTS.map(([k, label]) => `<button class=chip data-sort=${k}>${label}</button>`).join('')}</div>
+<label class=find><input type=search placeholder="Filter bounties by name" aria-label="Filter bounties by name"><kbd>/</kbd></label>
+<div class=chips data-group=cat></div></div>
+<ol class=rows></ol><p class=empty hidden>No bounty matches.</p>
+<p class=keys><kbd>/</kbd> filter · <kbd>j</kbd> <kbd>k</kbd> or <kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>Enter</kbd> open · the board is one API request, rows patched in place</p>`;
+  $.querySelector('input').addEventListener('input', (e) => ((state.q = e.target.value.trim().toLowerCase()), sortFilterRows()));
+  $.querySelector('.bh').addEventListener('click', (e) => {
+    const t = e.target.closest('button');
+    if (!t) return;
+    if (t.dataset.tab) state.tab = t.dataset.tab, (state.cat = '');
+    if (t.dataset.sort) state.sort = t.dataset.sort;
+    if (t.dataset.cat != null) state.cat = t.dataset.cat;
+    sortFilterRows();
+  });
+  addEventListener('keydown', boardKeys);
+}
+function visibleBounties() {
+  const [, , key, dir] = SORTS.find(([k]) => k == state.sort);
+  const ended = state.tab == 'ended';
+  return state.items
+    .filter((b) => takesEntries(b) != ended && (!state.cat || b.category == state.cat))
+    .filter((b) => !state.q || `${b.title} ${b.category} ${b.summary}`.toLowerCase().includes(state.q))
+    .sort((a, b) => (key(a) - key(b)) * (ended && state.sort == 'soon' ? -dir : dir));
 }
 
 function selectRow(slug) {
@@ -111,28 +122,30 @@ function selectRow(slug) {
   if (a) a.setAttribute('aria-current', 'page'), a.scrollIntoView({ block: 'nearest' });
 }
 
-async function revalidateBoardEachMinute() {
-  if (document.body.dataset.route == 'board' || document.body.dataset.route == 'bounty') patchBoardRows((await cachedJSON(BOARD)).items);
-}
-
 function boardKeys(e) {
-  const route = document.body.dataset.route;
-  if ((route != 'board' && route != 'bounty') || e.ctrlKey || e.metaKey || e.altKey) return;
+  const v = document.body.dataset.v;
+  if (v == 'profile' || e.ctrlKey || e.metaKey || e.altKey) return;
   const typing = e.target.matches?.('input');
-  if (e.key == '/' && !typing) return e.preventDefault(), q('input').focus();
+  if (e.key == '/' && !typing) return e.preventDefault(), side().querySelector('input').focus();
   if (e.key == 'Escape' && typing) return e.target.blur();
+  if (typing) return;
+  if (e.key == 'Enter' && state.sel && !e.target.matches('a,button')) return (location.hash = '#/bounty/' + encodeURIComponent(state.sel));
   const step = { j: 1, ArrowDown: 1, k: -1, ArrowUp: -1 }[e.key];
-  if (!step || (typing && e.key.length == 1)) return;
+  if (!step || v == 'leaderboard') return;
   e.preventDefault();
-  const order = [...$list().querySelectorAll('.row:not([hidden])')].map((a) => a.dataset.slug);
+  const order = visibleBounties().map((b) => b.slug);
   const next = order[Math.max(0, Math.min(order.length - 1, order.indexOf(state.sel) + step))];
-  if (next) location.replace(`#/bounty/${encodeURIComponent(next)}`), rowEls.get(next).focus({ preventScroll: true });
+  if (next && next != state.sel) location.replace('#/bounty/' + encodeURIComponent(next));
 }
 
-const $list = () => document.querySelector('main').firstChild;
-const q = (sel) => $list().querySelector(sel);
-const state = { items: [], sort: 'dl', dir: 1, cat: '', q: '', sel: '', route: '' };
-const rowEls = new Map(); // slug -> <a class=row>, created once and patched after
-const SORTS = { title: (b) => b.title.toLowerCase(), pot: potOf, fee: (b) => Number(b.entryFeeUsd || 0), dl: (b) => Date.parse(b.deadline), n: (b) => b.submissionCount };
-const setText = (el, s) => el.textContent != s && (el.textContent = s);
-const setHTML = (el, s) => el.innerHTML != s && (el.innerHTML = s);
+const side = () => document.querySelector('main').firstElementChild;
+const state = { items: [], tab: 'live', sort: 'soon', cat: '', q: '', sel: '' };
+const rowEls = new Map(); // slug -> its <a class=row>, made once and patched after
+const SORTS = [
+  ['soon', 'Closing soon', (b) => Date.parse(b.deadline), 1],
+  ['pot', 'Biggest pot', potOf, -1],
+  ['entries', 'Most entries', (b) => b.submissionCount, -1],
+  ['new', 'Newest', (b) => Date.parse(b.publishedAt ?? b.deadline), -1],
+];
+
+export default renderBoard;
