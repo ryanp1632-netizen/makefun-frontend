@@ -45,7 +45,7 @@ function patchRow(el, i) {
   bar.style.left = lo + '%';
   bar.style.width = Math.max(1.5, hi - lo) + '%';
   const won = r.prize && rewards[r.prize - 1];
-  prize.textContent = won ? money(won.amountUsd) : '—';
+  prize.textContent = won ? money(won.amountUsd, cents) : '—';
   prize.className = won ? 'pot' : 'mu';
   at.textContent = r.at ? relTime(r.at) : '';
 }
@@ -66,6 +66,7 @@ function paintLeaderboard(slug, lb, b) {
   rows = mergeRows(lb);
   column = (lb.columns ?? []).find((c) => c.key == lb.rank_key) ?? { title: 'Score' };
   rewards = b.rewardsNow ?? [];
+  cents = Number(b.entryFeesUsd) > 0;
   const nums = rows.flatMap((r) => [r.value, r.low, r.high]).filter((v) => v != null && v !== '').map(Number).sort((x, y) => x - y);
   const lo = nums[Math.floor(nums.length * 0.05)] ?? 0, hi = nums.at(-1) ?? 1;
   scale = [lo - (hi - lo) * 0.05, hi + (hi - lo) * 0.02];
@@ -85,7 +86,7 @@ function paintLeaderboard(slug, lb, b) {
     pane.scrollTop = 0;
     query = '';
   }
-  pane.querySelector('.mini').innerHTML = `<span class=pot><b>${money(potOf(b))}</b>${live ? 'live pot' : 'pot'}</span><span><b>${Number(b.entryFeeUsd) ? money(b.entryFeeUsd) : 'Free'}</b>entry fee</span>`
+  pane.querySelector('.mini').innerHTML = `<span class=pot><b>${money(potOf(b), cents)}</b>${live ? 'live pot' : 'pot'}</span><span><b>${Number(b.entryFeeUsd) ? money(b.entryFeeUsd) : 'Free'}</b>entry fee</span>`
     + (live ? `<span class=hot><b data-dl="${esc(b.deadline)}" data-fmt=short></b>left</span>` : '<span><b>Ended</b>entries closed</span>')
     + `<span><b>${num(b.submissionCount ?? rows.length)}</b>entries</span><span><b>${num(rows.length)}</b>ranked</span><span><b>${rewards.length}</b>paid places</span>`;
   pane.querySelector('.find .mu').textContent = `${ph.title ?? 'Results'} phase · by ${scoreName(column).toLowerCase()}${rows.some((r) => r.low != null) ? ', bar = 90% interval' : ''}${ph.placements_held ? ' · unofficial until results' : ''}`;
@@ -114,6 +115,6 @@ function mergeRows(lb) {
 
 const pos = (v) => Math.max(0, Math.min(100, ((Number(v) - scale[0]) / (scale[1] - scale[0] || 1)) * 100));
 const ROW_H = 48, OVERSCAN = 8;
-let rows = [], shown = [], pool = [], scale = [0, 1], column = null, rewards = [], vl = null, query = '';
+let rows = [], shown = [], pool = [], scale = [0, 1], column = null, rewards = [], vl = null, query = '', cents = false;
 
 export default renderLeaderboard;

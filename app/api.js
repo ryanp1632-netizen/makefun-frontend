@@ -61,6 +61,10 @@ export function tickCountdowns() {
     el.classList.toggle('hot', left > 0 && left < DAY);
   }
   for (const el of document.querySelectorAll('[data-soon]')) el.hidden = !(Date.parse(el.dataset.soon) - now < DAY && Date.parse(el.dataset.soon) > now);
+  for (const el of document.querySelectorAll('[data-from]')) {
+    const from = Date.parse(el.dataset.from), to = Date.parse(el.dataset.to);
+    el.style.setProperty('--f', Math.max(0, Math.min(1, (now - from) / (to - from))).toFixed(4) || 0);
+  }
   paintCounter();
 }
 
@@ -92,9 +96,10 @@ export function timeLeft(iso, fmt) {
   return fmt == 'short' ? t : t + ' left';
 }
 
-export function money(v) {
+/** Dollars: whole amounts without cents unless `cents` (a column of fee-shared amounts reads alike). */
+export function money(v, cents) {
   const n = Number(v) || 0;
-  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 });
+  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: cents || n % 1 ? 2 : 0, maximumFractionDigits: 2 });
 }
 
 export const num = (n) => (Number(n) || 0).toLocaleString('en-US');
@@ -253,6 +258,7 @@ h1{font-size:25px;line-height:1.2;letter-spacing:-.015em;margin:0;flex:1}
 .card>span{font-size:11px;font-weight:700;letter-spacing:.07em;color:var(--mu)}
 .card>b{display:block;font-size:24px;line-height:1.25;letter-spacing:-.01em;white-space:nowrap}
 .card>small{font-size:12px;color:var(--mu)}
+.span{display:block;height:4px;margin-top:6px;border-radius:2px;background:linear-gradient(90deg,var(--hot) calc(var(--f,0)*100%),var(--soft) 0)}
 .two{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:12px;margin-bottom:12px}
 .box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
 .box h2{font-size:14px;margin:0}.box>p{margin:2px 0 8px;font-size:12.5px;color:var(--mu)}

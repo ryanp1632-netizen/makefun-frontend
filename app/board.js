@@ -83,7 +83,7 @@ function rowHTML(b) {
   const when = live ? `<span data-dl="${esc(b.deadline)}"></span>` : `<span>ended ${fmtDay(b.deadline)}</span>`;
   const winner = b.winner?.handle ? `<span>won by @${esc(b.winner.handle)}</span>` : '';
   return `<div class=rt><b>${esc(b.title)}</b>${badge}<small>${esc(b.category ?? '')}</small></div>
-<div class=rm><span class=pot>${money(potOf(b))} ${live ? 'pot' : 'paid'}</span>${fee ? `<span class=fee>${money(fee)} fee</span>` : '<span>no fee</span>'}${when}<span>${num(b.submissionCount)} entries</span>${winner}</div>`;
+<div class=rm><span class=pot>${money(potOf(b), Number(b.entryFeesUsd) > 0)} ${live ? 'pot' : 'paid'}</span>${fee ? `<span class=fee>${money(fee)} fee</span>` : '<span>no fee</span>'}${when}<span>${num(b.submissionCount)} entries</span>${winner}</div>`;
 }
 
 function buildBoard() {

@@ -30,11 +30,11 @@ function renderRewards(b) {
     else groups.push({ ...r, to: r.place });
     for (const k in total) total[k] += r[k];
   }
-  const top = Math.max(...list.map((r) => r.pays)), cls = total.share ? 'rw' : 'rw nofee';
-  return `<h2>Rewards</h2><p>${list.length} paid place${list.length == 1 ? '' : 's'} share the ${takesEntries(b) ? 'live ' : ''}pot of <b class=pot>${money(potOf(b))}</b></p>
+  const top = Math.max(...list.map((r) => r.pays)), c = total.share > 0, cls = c ? 'rw' : 'rw nofee';
+  return `<h2>Rewards</h2><p>${list.length} paid place${list.length == 1 ? '' : 's'} share the ${takesEntries(b) ? 'live ' : ''}pot of <b class=pot>${money(potOf(b), c)}</b></p>
 <div class="${cls} th"><span>PLACE</span><span></span><span>BASE</span><span class=fs>FEE SHARE</span><span>PAYS NOW</span></div>
-${groups.map((g) => `<div class="${cls}"><b>#${g.place}${g.to > g.place ? '–' + g.to : ''}</b><i style="width:${((g.pays / top) * 100).toFixed(1)}%"></i><span>${money(g.base)}</span><span class=fs>+${money(g.share)}</span><b class=pot>${money(g.pays)}${g.to > g.place ? ' <small>each</small>' : ''}</b></div>`).join('')}
-<div class="${cls}"><b>Total</b><span></span><span>${money(total.base)}</span><span class=fs>+${money(total.share)}</span><b class=pot>${money(total.pays)}</b></div>`;
+${groups.map((g) => `<div class="${cls}"><b>#${g.place}${g.to > g.place ? '–' + g.to : ''}</b><i style="width:${((g.pays / top) * 100).toFixed(1)}%"></i><span>${money(g.base)}</span><span class=fs>+${money(g.share, c)}</span><b class=pot>${money(g.pays, c)}${g.to > g.place ? ' <small>each</small>' : ''}</b></div>`).join('')}
+<div class="${cls}"><b>Total</b><span></span><span>${money(total.base)}</span><span class=fs>+${money(total.share, c)}</span><b class=pot>${money(total.pays, c)}</b></div>`;
 }
 
 /** The dates and phases in time order, past ones filled, with a red "Now" marker where today falls. */
@@ -58,9 +58,9 @@ function renderTimeline(b, d) {
 function renderCards(b, d) {
   const live = takesEntries(b), fee = Number(b.entryFeeUsd) || 0, fees = Number(b.entryFeesUsd) || 0;
   const last = (b.submissions ?? []).reduce((m, s) => (s.createdAt > m ? s.createdAt : m), '');
-  return statCard(live ? 'LIVE POT' : 'POT', money(potOf(b)), fees ? `${money(b.rewardAmount)} reward + ${money(fees)} fees` : 'the reward, no entry fees', 'pot')
+  return statCard(live ? 'LIVE POT' : 'POT', money(potOf(b), fees > 0), fees ? `${money(b.rewardAmount)} reward + ${money(fees, true)} fees` : 'the reward, no entry fees', 'pot')
     + statCard('ENTRY FEE', fee ? money(fee) : 'Free', fee ? `${num(b.entryFeePayers)} paid, once per account` : 'no fee to enter', fee ? 'fee' : '')
-    + (live ? statCard('TIME LEFT', `<span data-dl="${esc(b.deadline)}" data-fmt=short></span>`, `closes ${fmtDate(b.deadline)}`)
+    + (live ? statCard('TIME LEFT', `<span data-dl="${esc(b.deadline)}" data-fmt=short></span>`, `closes ${fmtDate(b.deadline)}<i class=span data-from="${esc(d?.opensAt ?? b.publishedAt ?? '')}" data-to="${esc(b.deadline)}"></i>`)
       : statCard('ENDED', fmtDay(b.deadline), b.status == 'resolved' ? 'results published' : 'judging, results pending'))
     + statCard('ENTRIES', num(b.submissionCount), d?.submissionsPassed != null ? `${num(d.submissionsPassed)} passed the checks` : last ? `last entry ${relTime(last)}` : 'none yet');
 }
