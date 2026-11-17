@@ -1,7 +1,7 @@
 // Takes the entry's screenshots (Node 22+, standard library only): serves app/ with serve.ts, starts headless Chrome,
 // drives it over the DevTools protocol with Node's built-in WebSocket, opens each route of shots.json at its viewport,
 // waits for window.__shotReady and the images, and captures a JPEG under 256 KiB. Nothing is edited afterwards.
-//   node tools/shoot.mjs [outDir] [--chrome <path>] [--profile <dir>] [--only <file>]
+//   node tools/shoot.mjs [outDir] [--chrome <path>] [--profile <dir>] [--only <file>] [--shots <shots.json>]
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,7 +15,7 @@ const chromePath = opt('--chrome', 'C:\\Program Files\\Google\\Chrome\\Applicati
 const profile = opt('--profile', join(tmpdir(), 'makefun-shots-profile'));
 const only = opt('--only', '');
 const APP_PORT = 8123, CDP_PORT = 9333, MAX_BYTES = 256 * 1024;
-const shots = JSON.parse(readFileSync(new URL('shots.json', root), 'utf8')).filter((s) => !only || s.file == only);
+const shots = JSON.parse(readFileSync(opt('--shots', new URL('shots.json', root)), 'utf8')).filter((s) => !only || s.file == only);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const server = spawn(process.execPath, ['serve.ts', '--port', String(APP_PORT)], { cwd: root, stdio: 'ignore' });
@@ -58,11 +58,21 @@ try {
     const { width, height } = shot.viewport;
     await s('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 600 });
     await Promise.all([s('Page.enable'), s('Runtime.enable'), s('Log.enable')]);
-    await s('Page.navigate', { url: `http://localhost:${APP_PORT}/${shot.path}` });
+    if (shot.dark) await s('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
+    // A shot with "from" opens that route first and then follows a link to its own, as a visitor would, so the header's
+    // request count shows what the app reuses from memory.
+    await s('Page.navigate', { url: `http://localhost:${APP_PORT}/${shot.from ?? shot.path}` });
     const ready = async (expr) => (await s('Runtime.evaluate', { expression: expr, returnByValue: true })).result.value;
     let ok = false;
     for (let i = 0; i < 300 && !(ok = await ready('window.__shotReady === true')); i++) await sleep(100);
+    if (shot.from) {
+      await sleep(400);
+      await ready(`window.__shotReady = false, location.hash = ${JSON.stringify(shot.path)}`);
+      for (let i = 0; i < 300 && !(ok = await ready('window.__shotReady === true')); i++) await sleep(100);
+    }
     if (!ok) console.log(`  ${shot.file}: __shotReady never turned true`);
+    if (shot.click) await ready(`document.querySelector(${JSON.stringify(shot.click)})?.click()`), await sleep(300);
+    if (shot.eval) await ready(shot.eval), await sleep(1500); // test-only: run a script in the page (keys, typing) before the shot
     for (let i = 0; i < 80 && !(await ready('[...document.images].every((i) => i.complete)')); i++) await sleep(100);
     await sleep(1200);
     let quality = 90, bytes;
